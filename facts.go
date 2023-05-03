@@ -6,7 +6,6 @@ import (
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/mergestat/kyc/scanner"
-	"github.com/mergestat/kyc/scanner/tools/docker"
 	"go.riyazali.net/sqlite"
 )
 
@@ -31,7 +30,7 @@ const (
 // FactModule implements sqlite.Module interface for fact() table-valued function.
 type FactModule struct{}
 
-func (mod *FactModule) Connect(_ *sqlite.Conn, args []string, declare func(string) error) (_ sqlite.VirtualTable, err error) {
+func (mod *FactModule) Connect(_ *sqlite.Conn, _ []string, declare func(string) error) (_ sqlite.VirtualTable, err error) {
 	const query = `
 		CREATE TABLE facts (
 			commit_hash 	TEXT,
@@ -87,11 +86,13 @@ func (cur *FactCursor) Filter(_ int, _ string, _ ...sqlite.Value) (err error) {
 	}
 
 	var tree, _ = commit.Tree()
+	var scanners = scanner.All()
 
-	for _, scn := range []scanner.Scanner{&docker.DockerfileScanner{}} {
-		var scannerName = scn.Name()
-
-		err = tree.Files().ForEach(func(file *object.File) error {
+	// TODO(@riyaz): explore async options for file scanning
+	// iterate over all files in the tree, and run all scanners against each file
+	err = tree.Files().ForEach(func(file *object.File) error {
+		for _, scn := range scanners {
+			var scannerName = scn.Name()
 			if scn.Supports(file) {
 				var facts []scanner.Fact
 				if facts, err = scn.Scan(file); err != nil {
@@ -103,16 +104,12 @@ func (cur *FactCursor) Filter(_ int, _ string, _ ...sqlite.Value) (err error) {
 					cur.facts = append(cur.facts, &Fact{Commit: commit, File: file, Scanner: scannerName, Key: key, Value: val})
 				}
 			}
-
-			return nil
-		})
-
-		if err != nil {
-			return err
 		}
-	}
 
-	return nil
+		return nil
+	})
+
+	return err
 }
 
 func (cur *FactCursor) Column(context *sqlite.VirtualTableContext, pos int) error {

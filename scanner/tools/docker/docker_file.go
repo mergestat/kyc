@@ -32,3 +32,6 @@ func (d *DockerfileScanner) Scan(file *object.File) (_ []scanner.Fact, err error
 
 	return facts, nil
 }
+
+// register the DockerfileScanner with scanner registry
+func init() { scanner.Register(&DockerfileScanner{}) }
