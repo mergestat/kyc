@@ -7,6 +7,7 @@ import (
 
 // side effect imports for all built-in scanners
 import (
+	_ "github.com/mergestat/kyc/pkg/scanner/meta/files"
 	_ "github.com/mergestat/kyc/pkg/scanner/tools/docker"
 )
 

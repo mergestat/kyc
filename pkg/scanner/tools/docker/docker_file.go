@@ -23,7 +23,7 @@ func (d *DockerfileScanner) Supports(file *object.File) bool {
 	return file.Mode.IsFile() && strings.HasSuffix(file.Name, "Dockerfile")
 }
 
-func (d *DockerfileScanner) Scan(ctx context.Context, file *object.File) (_ []scanner.Fact, err error) {
+func (d *DockerfileScanner) Scan(ctx context.Context, file *object.File, _ ...string) (_ []scanner.Fact, err error) {
 	var facts []scanner.Fact
 
 	// read the file content to parse

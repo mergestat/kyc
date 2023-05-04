@@ -10,12 +10,13 @@ type Fact struct {
 	Value any
 }
 
+// Scanner scans a given file, emitting relevant facts extracted from it.
 type Scanner interface {
 	// Supports returns true if the given file is supported, else it returns false.
 	Supports(file *object.File) bool
 
 	// Scan reads the content of the file and emit facts based on it.
-	Scan(ctx context.Context, file *object.File) ([]Fact, error)
+	Scan(ctx context.Context, file *object.File, keys ...string) ([]Fact, error)
 }
 
 // collection of all registered scanners
