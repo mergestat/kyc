@@ -2,12 +2,14 @@ package kyc
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/mergestat/kyc/pkg/scanner"
 	"go.riyazali.net/sqlite"
+	"os"
 )
 
 type Fact struct {
@@ -26,6 +28,12 @@ const (
 	ColumnScanner          // name of the scanner used
 	ColumnFactKey          // identifier for fact type
 	ColumnFactValue        // extracted fact value
+)
+
+const (
+	_       = iota
+	OpEqual // op code for equals-to operation
+	OpLike  // op code for LIKE operation
 )
 
 // FactModule implements sqlite.Module interface for fact() table-valued function.
@@ -53,9 +61,61 @@ func (mod *FactModule) Connect(_ *sqlite.Conn, _ []string, declare func(string) 
 type FactTable struct{}
 
 func (table *FactTable) BestIndex(input *sqlite.IndexInfoInput) (*sqlite.IndexInfoOutput, error) {
+	var argv = 1
+	var bitmap []byte
+	var set = func(op, col int) { bitmap = append(bitmap, byte(op<<4|col)) }
+
 	var output = &sqlite.IndexInfoOutput{
 		ConstraintUsage: make([]*sqlite.ConstraintUsage, len(input.Constraints)),
 	}
+
+	var commitConstrained = false
+
+	for i, cons := range input.Constraints {
+		switch col := cons.ColumnIndex; col {
+		case ColumnCommit:
+			{
+				if cons.Op != sqlite.INDEX_CONSTRAINT_EQ {
+					return nil, sqlite.Error(sqlite.SQLITE_CONSTRAINT, "only equals-to operation is supported on commit hash")
+				}
+
+				if cons.Usable {
+					output.ConstraintUsage[i] = &sqlite.ConstraintUsage{ArgvIndex: argv, Omit: true}
+					commitConstrained, argv = true, argv+1
+					set(OpEqual, col)
+				}
+			}
+
+		case ColumnScanner:
+			{
+				if cons.Op != sqlite.INDEX_CONSTRAINT_EQ && cons.Op != sqlite.INDEX_CONSTRAINT_LIKE {
+					return nil, sqlite.Error(sqlite.SQLITE_CONSTRAINT, "only equals-to and LIKE operations are supported on scanner")
+				}
+
+				if !cons.Usable {
+					// TODO(@riyaz): make this error more user-friendly
+					return nil, sqlite.Error(sqlite.SQLITE_CONSTRAINT, "scanner constraint must be usable")
+				}
+
+				// TODO(@riyaz): set omit to true once the constraints are implemented below
+				output.ConstraintUsage[i] = &sqlite.ConstraintUsage{ArgvIndex: argv, Omit: false}
+				argv += 1
+
+				if cons.Op == sqlite.INDEX_CONSTRAINT_EQ {
+					set(OpEqual, col)
+				} else {
+					set(OpLike, col)
+				}
+			}
+		}
+	}
+
+	if !commitConstrained {
+		return nil, sqlite.Error(sqlite.SQLITE_CONSTRAINT, "commit hash is required")
+	}
+
+	// pass the bitmap as string to xFilter routine
+	output.IndexString = base64.StdEncoding.EncodeToString(bitmap)
 
 	return output, nil
 }
@@ -70,26 +130,49 @@ type FactCursor struct {
 	facts []*Fact
 }
 
-func (cur *FactCursor) Filter(_ int, _ string, _ ...sqlite.Value) (err error) {
+func (cur *FactCursor) Filter(_ int, str string, values ...sqlite.Value) (err error) {
 	var ctx = context.Background()
 
-	var repo *git.Repository
-	if repo, err = git.PlainOpen("."); err != nil {
+	var cwd string
+	if cwd, err = os.Getwd(); err != nil {
 		return err
 	}
 
-	var ref *plumbing.Reference
-	if ref, err = repo.Head(); err != nil {
+	var repo *git.Repository
+	if repo, err = git.PlainOpen(cwd); err != nil {
 		return err
 	}
 
 	var commit *object.Commit
-	if commit, err = repo.CommitObject(ref.Hash()); err != nil {
-		return err
+	var scanners = scanner.All()
+
+	var bitmap, _ = base64.StdEncoding.DecodeString(str)
+	for n, val := range values {
+		op, col := (bitmap[n]&0b11110000)>>4, bitmap[n]&0b00001111
+		switch {
+		case col == ColumnCommit && op == OpEqual:
+			{
+				if !plumbing.IsHash(val.Text()) {
+					return sqlite.Error(sqlite.SQLITE_ERROR, "invalid commit hash")
+				}
+
+				if commit, err = repo.CommitObject(plumbing.NewHash(val.Text())); err != nil {
+					return sqlite.Error(sqlite.SQLITE_ERROR, err.Error())
+				}
+			}
+
+		case col == ColumnScanner:
+			{
+				// TODO(@riyaz): implement constraint on scanner column
+			}
+		}
+
 	}
 
-	var tree, _ = commit.Tree()
-	var scanners = scanner.All()
+	var tree *object.Tree
+	if tree, err = commit.Tree(); err != nil {
+		return sqlite.Error(sqlite.SQLITE_ERROR, err.Error())
+	}
 
 	// TODO(@riyaz): explore async options for file scanning
 	// iterate over all files in the tree, and run all scanners against each file
