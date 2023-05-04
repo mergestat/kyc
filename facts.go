@@ -1,11 +1,12 @@
 package kyc
 
 import (
+	"context"
 	"encoding/json"
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
-	"github.com/mergestat/kyc/scanner"
+	"github.com/mergestat/kyc/pkg/scanner"
 	"go.riyazali.net/sqlite"
 )
 
@@ -70,6 +71,8 @@ type FactCursor struct {
 }
 
 func (cur *FactCursor) Filter(_ int, _ string, _ ...sqlite.Value) (err error) {
+	var ctx = context.Background()
+
 	var repo *git.Repository
 	if repo, err = git.PlainOpen("."); err != nil {
 		return err
@@ -91,17 +94,16 @@ func (cur *FactCursor) Filter(_ int, _ string, _ ...sqlite.Value) (err error) {
 	// TODO(@riyaz): explore async options for file scanning
 	// iterate over all files in the tree, and run all scanners against each file
 	err = tree.Files().ForEach(func(file *object.File) error {
-		for _, scn := range scanners {
-			var scannerName = scn.Name()
+		for name, scn := range scanners {
 			if scn.Supports(file) {
 				var facts []scanner.Fact
-				if facts, err = scn.Scan(file); err != nil {
+				if facts, err = scn.Scan(ctx, file); err != nil {
 					return err
 				}
 
 				for i := range facts {
 					key, val := facts[i].Key, facts[i].Value
-					cur.facts = append(cur.facts, &Fact{Commit: commit, File: file, Scanner: scannerName, Key: key, Value: val})
+					cur.facts = append(cur.facts, &Fact{Commit: commit, File: file, Scanner: name, Key: key, Value: val})
 				}
 			}
 		}
