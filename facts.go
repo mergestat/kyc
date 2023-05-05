@@ -36,6 +36,8 @@ const (
 	OpEqual // op code for equals-to operation
 	OpLike  // op code for LIKE operation
 	OpGlob  // op code for GLOB operation
+	OpLte   // op code for <= operation
+	OpGte   // op code for >= operation
 )
 
 // FactModule implements sqlite.Module interface for fact() table-valued function.
