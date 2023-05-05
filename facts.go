@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"github.com/bmatcuk/doublestar/v4"
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
@@ -34,6 +35,7 @@ const (
 	_       = iota
 	OpEqual // op code for equals-to operation
 	OpLike  // op code for LIKE operation
+	OpGlob  // op code for GLOB operation
 )
 
 // FactModule implements sqlite.Module interface for fact() table-valued function.
@@ -72,10 +74,10 @@ func (table *FactTable) BestIndex(input *sqlite.IndexInfoInput) (*sqlite.IndexIn
 	var commitConstrained = false
 
 	for i, cons := range input.Constraints {
-		switch col := cons.ColumnIndex; col {
+		switch col, op := cons.ColumnIndex, cons.Op; col {
 		case ColumnCommit:
 			{
-				if cons.Op != sqlite.INDEX_CONSTRAINT_EQ {
+				if op != sqlite.INDEX_CONSTRAINT_EQ {
 					return nil, sqlite.Error(sqlite.SQLITE_CONSTRAINT, "only equals-to operation is supported on commit hash")
 				}
 
@@ -85,10 +87,44 @@ func (table *FactTable) BestIndex(input *sqlite.IndexInfoInput) (*sqlite.IndexIn
 					set(OpEqual, col)
 				}
 			}
+		case ColumnFileName:
+			{
+				if op == sqlite.INDEX_CONSTRAINT_GE || op == sqlite.INDEX_CONSTRAINT_LT {
+					// sometimes sqlite core try to infer the glob pattern, and uses >= and <
+					// operations to hint to the virtual table implementation that it can skip
+					// "certain rows" using the range specified by >= and <
+					//
+					// For example, if we specify "a/**/*.go" as glob pattern, the sqlite core "knows"
+					// that we can skip all values that do not start with "a/" and hence it'll use the range
+					// operators to signal that.
+					//
+					// We do not support it at the moment and so we simply ignore these constraints.
+					//
+					// TODO(@riyaz): look into how we can use these constraints to improve tree traversal performance
+					continue
+				}
 
+				if op != sqlite.INDEX_CONSTRAINT_EQ && op != sqlite.INDEX_CONSTRAINT_GLOB {
+					return nil, sqlite.Error(sqlite.SQLITE_CONSTRAINT, "only equals-to and GLOB operations are supported on file_name")
+				}
+
+				if !cons.Usable {
+					// TODO(@riyaz): make this error more user-friendly
+					return nil, sqlite.Error(sqlite.SQLITE_CONSTRAINT, "file_name constraint must be usable")
+				}
+
+				output.ConstraintUsage[i] = &sqlite.ConstraintUsage{ArgvIndex: argv, Omit: true}
+				argv += 1
+
+				if op == sqlite.INDEX_CONSTRAINT_EQ {
+					set(OpEqual, col)
+				} else {
+					set(OpGlob, col)
+				}
+			}
 		case ColumnScanner:
 			{
-				if cons.Op != sqlite.INDEX_CONSTRAINT_EQ && cons.Op != sqlite.INDEX_CONSTRAINT_LIKE {
+				if op != sqlite.INDEX_CONSTRAINT_EQ && op != sqlite.INDEX_CONSTRAINT_LIKE {
 					return nil, sqlite.Error(sqlite.SQLITE_CONSTRAINT, "only equals-to and LIKE operations are supported on scanner")
 				}
 
@@ -101,7 +137,7 @@ func (table *FactTable) BestIndex(input *sqlite.IndexInfoInput) (*sqlite.IndexIn
 				output.ConstraintUsage[i] = &sqlite.ConstraintUsage{ArgvIndex: argv, Omit: false}
 				argv += 1
 
-				if cons.Op == sqlite.INDEX_CONSTRAINT_EQ {
+				if op == sqlite.INDEX_CONSTRAINT_EQ {
 					set(OpEqual, col)
 				} else {
 					set(OpLike, col)
@@ -145,6 +181,7 @@ func (cur *FactCursor) Filter(_ int, str string, values ...sqlite.Value) (err er
 
 	var commit *object.Commit
 	var scanners = scanner.All()
+	var glob = func(_ *object.File) bool { return true } // default glob func is a no-op
 
 	var bitmap, _ = base64.StdEncoding.DecodeString(str)
 	for n, val := range values {
@@ -160,7 +197,10 @@ func (cur *FactCursor) Filter(_ int, str string, values ...sqlite.Value) (err er
 					return sqlite.Error(sqlite.SQLITE_ERROR, err.Error())
 				}
 			}
-
+		case col == ColumnFileName && (op == OpEqual || op == OpGlob):
+			{
+				glob = globFunc(val.Text()) // works for both OpEqual and OpGlob
+			}
 		case col == ColumnScanner:
 			{
 				// TODO(@riyaz): implement constraint on scanner column
@@ -178,7 +218,7 @@ func (cur *FactCursor) Filter(_ int, str string, values ...sqlite.Value) (err er
 	// iterate over all files in the tree, and run all scanners against each file
 	err = tree.Files().ForEach(func(file *object.File) error {
 		for name, scn := range scanners {
-			if scn.Supports(file) {
+			if glob(file) && scn.Supports(file) {
 				var facts []scanner.Fact
 				if facts, err = scn.Scan(ctx, file); err != nil {
 					return err
@@ -223,3 +263,8 @@ func (cur *FactCursor) Next() error           { cur.pos += 1; return nil }
 func (cur *FactCursor) Rowid() (int64, error) { return int64(cur.pos), nil }
 func (cur *FactCursor) Eof() bool             { return cur.pos >= len(cur.facts) }
 func (cur *FactCursor) Close() error          { return nil }
+
+// creates a glob pattern matching function
+func globFunc(pattern string) func(*object.File) bool {
+	return func(file *object.File) bool { var match, _ = doublestar.PathMatch(pattern, file.Name); return match }
+}

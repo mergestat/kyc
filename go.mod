@@ -3,6 +3,7 @@ module github.com/mergestat/kyc
 go 1.19
 
 require (
+	github.com/bmatcuk/doublestar/v4 v4.6.0
 	github.com/go-git/go-git/v5 v5.6.1
 	github.com/smacker/go-tree-sitter v0.0.0-20230501083651-a7d92773b3aa
 	go.riyazali.net/sqlite v0.0.0-20230320080028-80a51d3944c0
