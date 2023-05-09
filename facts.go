@@ -79,11 +79,7 @@ func (table *FactTable) BestIndex(input *sqlite.IndexInfoInput) (*sqlite.IndexIn
 		switch col, op := cons.ColumnIndex, cons.Op; col {
 		case ColumnCommit:
 			{
-				if op != sqlite.INDEX_CONSTRAINT_EQ {
-					return nil, sqlite.Error(sqlite.SQLITE_CONSTRAINT, "only equals-to operation is supported on commit hash")
-				}
-
-				if cons.Usable {
+				if op == sqlite.INDEX_CONSTRAINT_EQ && cons.Usable {
 					output.ConstraintUsage[i] = &sqlite.ConstraintUsage{ArgvIndex: argv, Omit: true}
 					commitConstrained, argv = true, argv+1
 					set(OpEqual, col)
