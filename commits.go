@@ -212,3 +212,33 @@ func (cur *CommitsCursor) Close() error {
 	}
 	return nil
 }
+
+// HeadFunc implements SQL custom scalar function HEAD() that returns the commit hash
+// value for the current head for the git repository in the current working directory.
+type HeadFunc struct{}
+
+func (h *HeadFunc) Deterministic() bool { return true }
+func (h *HeadFunc) Args() int           { return 0 }
+
+func (h *HeadFunc) Apply(context *sqlite.Context, _ ...sqlite.Value) {
+	var err error
+	var cwd string
+	if cwd, err = os.Getwd(); err != nil {
+		context.ResultError(errors.Wrapf(err, "failed to determine current working directory"))
+		return
+	}
+
+	var repo *git.Repository
+	if repo, err = git.PlainOpen(cwd); err != nil {
+		context.ResultError(errors.Wrapf(err, "failed to open git repository in current working directory"))
+		return
+	}
+
+	var ref *plumbing.Reference
+	if ref, err = repo.Head(); err != nil {
+		context.ResultError(errors.Wrapf(err, "failed to determine current HEAD in repository"))
+		return
+	}
+
+	context.ResultText(ref.Hash().String())
+}

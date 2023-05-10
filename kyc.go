@@ -13,6 +13,10 @@ func ExtensionFunc() sqlite.ExtensionFunc {
 			return sqlite.SQLITE_ERROR, err
 		}
 
+		if err = ext.CreateFunction("head", &HeadFunc{}); err != nil {
+			return sqlite.SQLITE_ERROR, err
+		}
+
 		return sqlite.SQLITE_OK, nil
 	}
 }

@@ -37,16 +37,16 @@ sqlite> .load  libkyc.so
 If you're in the context of a git repository, you can run a query that looks like:
 
 ```
-sqlite> SELECT * FROM facts WHERE commit_hash = 'bf6fb7e1b42c5f5021fea942c20f3d8c1ff4c2cb';
+sqlite> SELECT * FROM facts WHERE commit_hash = HEAD();
 ```
 
-(Where the commit hash is the commit you'd like to derive facts from - `HEAD` will soon be the default).
+(Where the commit hash is the commit you'd like to derive facts from).
 You'll see a "dump" of all the facts `kyc` has derived from your source code.
 
 To narrow results and present them better, try for example:
 
 ```
-sqlite> SELECT value->>'path' AS pkg, value->>'version' AS version FROM facts WHERE commit_hash = 'bf6fb7e1b42c5f5021fea942c20f3d8c1ff4c2cb' AND key = '@golang/mod/require';
+sqlite> SELECT value->>'path' AS pkg, value->>'version' AS version FROM facts WHERE commit_hash = HEAD() AND key = '@golang/mod/require';
 pkg                                version                           
 ---------------------------------  ----------------------------------
 github.com/bmatcuk/doublestar/v4   v4.6.0                            
