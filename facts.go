@@ -23,12 +23,13 @@ type Fact struct {
 }
 
 const (
-	ColumnCommit    = iota // hash of the commit in the repository
-	ColumnFileName         // name of the file from which the fact was extracted
-	ColumnFileBlob         // git blob hash of the file
-	ColumnScanner          // name of the scanner used
-	ColumnFactKey          // identifier for fact type
-	ColumnFactValue        // extracted fact value
+	ColumnRepository = iota // pointer to the git.Repository object
+	ColumnCommit            // hash of the commit in the repository
+	ColumnFileName          // name of the file from which the fact was extracted
+	ColumnFileBlob          // git blob hash of the file
+	ColumnScanner           // name of the scanner used
+	ColumnFactKey           // identifier for fact type
+	ColumnFactValue         // extracted fact value
 )
 
 const (
@@ -46,6 +47,7 @@ type FactModule struct{}
 func (mod *FactModule) Connect(_ *sqlite.Conn, _ []string, declare func(string) error) (_ sqlite.VirtualTable, err error) {
 	const query = `
 		CREATE TABLE facts (
+		    repository		HIDDEN,
 			commit_hash 	TEXT,
 			file_name 		TEXT,
 			file_blob 		TEXT,
@@ -160,6 +162,7 @@ func (table *FactTable) Destroy() error                      { return nil }
 
 // FactCursor implements sqlite.VirtualCursor interface for fact() table-valued function.
 type FactCursor struct {
+	repo  *git.Repository
 	pos   int
 	facts []*Fact
 }
@@ -232,6 +235,7 @@ func (cur *FactCursor) Filter(_ int, str string, values ...sqlite.Value) (err er
 		return nil
 	})
 
+	cur.repo = repo
 	return err
 }
 
@@ -239,6 +243,8 @@ func (cur *FactCursor) Column(context *sqlite.VirtualTableContext, pos int) erro
 	var fact = cur.facts[cur.pos]
 
 	switch pos {
+	case ColumnRepository:
+		context.ResultPointer(cur.repo)
 	case ColumnCommit:
 		context.ResultText(fact.Commit.ID().String())
 	case ColumnFileName:
